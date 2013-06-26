@@ -19,7 +19,6 @@
            (except-out (all-defined-out)
                        zmq-strerror
                        zmq-ctx-destroy
-                       zmq-msg-new
                        zmq-msg-close)))
 
 
@@ -136,13 +135,9 @@
 
 
 ;; Messages
-(define (zmq-msg-new)
-  (let ((msg (cast (malloc _zmq-msg 'raw) _pointer _zmq-msg-pointer)))
-    (with-finalizer msg free)))
-
 (define-zmq zmq-msg-init
             (_fun #:save-errno 'posix
-                  (msg : _zmq-msg-pointer = (zmq-msg-new))
+                  (msg : (_ptr o _zmq-msg))
                   --> (result : _int)
                   --> (begin
                         (check-result result)
@@ -150,28 +145,28 @@
 
 (define-zmq zmq-msg-close
             (_fun #:save-errno 'posix
-                  _zmq-msg-pointer
+                  (_ptr i _zmq-msg)
                   --> (result : _int)
                   --> (void (check-result result))))
 
 (define-zmq zmq-msg-size
-            (_fun _zmq-msg-pointer --> _size))
+            (_fun (_ptr i _zmq-msg) --> _size))
 
 (define-zmq zmq-msg-data
-            (_fun _zmq-msg-pointer --> _pointer))
+            (_fun (_ptr i _zmq-msg) --> _pointer))
 
 (define-zmq zmq-msg-more?
-            (_fun _zmq-msg-pointer --> _bool))
+            (_fun (_ptr i _zmq-msg) --> _bool))
 
 (define-zmq zmq-msg-recv
             (_fun #:save-errno 'posix
-                  (msg : _zmq-msg-pointer = (zmq-msg-init))
+                  (msg : (_ptr io _zmq-msg) = (zmq-msg-init))
                   _zmq-socket-pointer
                   (_bitmask '(dontwait = 1))
                   --> (result : _int)
                   --> (begin
                         (check-result result)
-                        (with-finalizer msg zmq-msg-close))))
+                        msg)))
 
 (define (zmq-msg->bytes msg)
   (bytes-copy (make-sized-byte-string (zmq-msg-data msg) (zmq-msg-size msg))))
