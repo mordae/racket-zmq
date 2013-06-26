@@ -14,7 +14,7 @@
   (printf "received ~s\n" parts))
 ```
 
-## Producer
+## Publisher
 
 ```racket
 (require zmq)
