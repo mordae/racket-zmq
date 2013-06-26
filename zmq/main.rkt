@@ -27,10 +27,14 @@
 
 
 (define/contract (make-socket type #:identity (identity #f)
-                                   #:subscribe (subscribe null))
+                                   #:subscribe (subscribe null)
+                                   #:bind (bind null)
+                                   #:connect (connect null))
                  (->* (socket-type?)
                       (#:identity (or/c #f string? bytes?)
-                       #:subscribe (listof (or/c string? bytes?)))
+                       #:subscribe (listof (or/c string? bytes?))
+                       #:bind (listof string?)
+                       #:connect (listof string?))
                       socket?)
   ;; Create the underlying C object.
   (let ((s (zmq-socket zmq-context type)))
@@ -41,6 +45,14 @@
         ;; Set socket identity, if specified.
         (when identity
           (set-socket-identity! socket identity))
+
+        ;; Bind to given endpoints.
+        (for ((endpoint (in-list bind)))
+          (socket-bind socket endpoint))
+
+        ;; Connect to given endpoints.
+        (for ((endpoint (in-list connect)))
+          (socket-connect socket endpoint))
 
         ;; Subscribe to given prefixes.
         (for ((prefix (in-list subscribe)))

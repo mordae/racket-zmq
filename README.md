@@ -5,8 +5,9 @@
 ```racket
 (require zmq)
 
-(define socket (make-socket 'sub #:subscribe '("foo" "bar")))
-(socket-connect socket "tcp://127.0.0.1:1234")
+(define socket (make-socket 'sub
+                            #:subscribe '("foo" "bar")
+                            #:connect '("tcp://127.0.0.1:1234")))
 
 (for ((parts (in-producer socket-receive/list #f socket)))
   (printf "received ~s\n" parts))
@@ -17,8 +18,8 @@
 ```racket
 (require zmq)
 
-(define socket (make-socket 'pub))
-(socket-bind socket "tcp://127.0.0.1:1234")
+(define socket (make-socket 'pub
+                            #:bind '("tcp://127.0.0.1:1234")))
 
 (for ((i (in-producer sleep #f 1)))
   (socket-send socket "foo" "Hello World!"))
@@ -29,8 +30,9 @@
 ```racket
 (require zmq)
 
-(define socket (make-socket 'router #:identity "hub"))
-(socket-bind socket "tcp://127.0.0.1:4321")
+(define socket (make-socket 'router
+                            #:identity "hub"
+                            #:bind '("tcp://127.0.0.1:4321")))
 
 (for ((parts (in-producer socket-receive/list #f socket)))
   (printf "received ~s\n" parts)
