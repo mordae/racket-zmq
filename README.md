@@ -23,8 +23,9 @@
 (socket-bind socket "tcp://127.0.0.1:1234")
 
 (let loop ()
-  (socket-send socket "one" "two" "three")
-  (sleep 1))
+  (socket-send socket "foo" "Hello World!")
+  (sleep 1)
+  (loop))
 ```
 
 ## Router
