@@ -3,12 +3,14 @@
 ; ZeroMQ Bindings
 ;
 
-(require racket/contract)
+(require racket/contract
+         racket/function
+         (only-in ffi/unsafe register-finalizer))
 
 (require "private/ffi.rkt")
 
 (provide (except-out
-           (all-defined-out) zmq-context socket))
+           (all-defined-out) zmq-context socket drain))
 
 
 ;; Single context with only one I/O thread.
@@ -16,8 +18,8 @@
 
 
 (define-struct socket
-  (s     ; The actual C object.
-   evt)  ; Input port for event notifications (sync on it).
+  (sock  ; The actual C object.
+   inch) ; Channel for message receiving.
   #:constructor-name new-socket)
 
 
@@ -37,11 +39,12 @@
                        #:connect (listof string?))
                       socket?)
   ;; Create the underlying C object.
-  (let ((s (zmq-socket zmq-context type)))
+  (let ((s    (zmq-socket zmq-context type))
+        (inch (make-channel)))
     ;; Extract notification port.
     (let-values (((in out) (socket->ports (zmq-getsockopt/int s 'fd) "zmq")))
       ;; Create socket structure.
-      (let ((socket (new-socket s in)))
+      (let ((socket (new-socket s inch)))
         ;; Set socket identity, if specified.
         (when identity
           (set-socket-identity! socket identity))
@@ -58,19 +61,45 @@
         (for ((prefix (in-list subscribe)))
           (socket-subscribe! socket prefix))
 
+        ;; Pump channels from socket to the channel.
+        (define pump
+          (thread (thunk
+                    (for ((msg (in-producer drain #f s in)))
+                         (channel-put inch msg)))))
+
+        ;; Kill the pump once our socket gets forgotten.
+        (register-finalizer socket
+          (lambda (socket)
+            (thread-suspend pump)))
+
         ;; Return the new socket.
         socket))))
+
+
+;; Wait for and read a message from socket.
+(define (drain sock evt)
+  (let poll ()
+    (let ((flags (zmq-getsockopt/int sock 'events)))
+      (unless (bitwise-bit-set? flags 0)
+        (sync evt)
+        (poll))))
+
+  (let loop ()
+    (let ((msg (zmq-msg-recv sock '(dontwait))))
+      (if (zmq-msg-more? msg)
+        (cons (zmq-msg->bytes msg) (loop))
+        (list (zmq-msg->bytes msg))))))
 
 
 (define/contract (set-socket-identity! socket name)
                  (-> socket? (or/c #f string? bytes?) void?)
   (let ((name (if (string? name) (string->bytes/utf-8 name) name)))
-    (zmq-setsockopt/bstr (socket-s socket) 'identity name)))
+    (zmq-setsockopt/bstr (socket-sock socket) 'identity name)))
 
 
 (define/contract (socket-identity socket)
                  (-> socket? bytes?)
-  (zmq-getsockopt/bstr (socket-s socket) 'identity))
+  (zmq-getsockopt/bstr (socket-sock socket) 'identity))
 
 
 (define/contract (socket-send socket . parts)
@@ -79,24 +108,14 @@
     (let ((value (if (string? (car parts))
                    (string->bytes/utf-8 (car parts))
                    (car parts))))
-      (zmq-send (socket-s socket) value
+      (zmq-send (socket-sock socket) value
                 (if (null? (cdr parts)) '() '(sndmore))))
     (apply socket-send socket (cdr parts))))
 
 
 (define/contract (socket-receive/list socket)
                  (-> socket? (listof bytes?))
-  (let poll ()
-    (let ((flags (zmq-getsockopt/int (socket-s socket) 'events)))
-      (unless (bitwise-bit-set? flags 0)
-        (sync (socket-evt socket))
-        (poll))))
-
-  (let loop ()
-    (let ((msg (zmq-msg-recv (socket-s socket) '(dontwait))))
-      (if (zmq-msg-more? msg)
-        (cons (zmq-msg->bytes msg) (loop))
-        (list (zmq-msg->bytes msg))))))
+  (channel-get (socket-inch socket)))
 
 
 (define/contract (socket-receive socket)
@@ -106,24 +125,29 @@
 
 (define/contract (socket-bind socket endpoint)
                  (-> socket? string? void?)
-  (zmq-bind (socket-s socket) endpoint))
+  (zmq-bind (socket-sock socket) endpoint))
 
 
 (define/contract (socket-connect socket endpoint)
                  (-> socket? string? void?)
-  (zmq-connect (socket-s socket) endpoint))
+  (zmq-connect (socket-sock socket) endpoint))
 
 
 (define/contract (socket-subscribe! socket prefix)
                  (-> socket? (or/c bytes? string?) void?)
   (let ((prefix (if (string? prefix) (string->bytes/utf-8 prefix) prefix)))
-    (zmq-setsockopt/bstr (socket-s socket) 'subscribe prefix)))
+    (zmq-setsockopt/bstr (socket-sock socket) 'subscribe prefix)))
 
 
 (define/contract (socket-unsubscribe! socket prefix)
                  (-> socket? (or/c bytes? string?) void?)
   (let ((prefix (if (string? prefix) (string->bytes/utf-8 prefix) prefix)))
-    (zmq-setsockopt/bstr (socket-s socket) 'unsubscribe prefix)))
+    (zmq-setsockopt/bstr (socket-sock socket) 'unsubscribe prefix)))
+
+
+(define/contract (socket-receive-evt socket)
+                 (-> socket? evt?)
+  (guard-evt (thunk (socket-inch socket))))
 
 
 ; vim:set ts=2 sw=2 et:
