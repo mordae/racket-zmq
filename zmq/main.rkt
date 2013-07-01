@@ -5,12 +5,13 @@
 
 (require racket/contract
          racket/function
+         racket/async-channel
          (only-in ffi/unsafe register-finalizer))
 
 (require "private/ffi.rkt")
 
 (provide (except-out
-           (all-defined-out) zmq-context socket drain))
+           (all-defined-out) zmq-context socket drain string->bytes/safe))
 
 
 ;; Single context with only one I/O thread.
@@ -19,7 +20,8 @@
 
 (define-struct socket
   (sock  ; The actual C object.
-   inch) ; Channel for message receiving.
+   inch  ; Channel for message receiving.
+   ping) ; Channel to ping input pump.
   #:constructor-name new-socket)
 
 
@@ -40,11 +42,12 @@
                       socket?)
   ;; Create the underlying C object.
   (let ((s    (zmq-socket zmq-context type))
-        (inch (make-channel)))
+        (inch (make-channel))
+        (ping (make-async-channel)))
     ;; Extract notification port.
     (let-values (((in out) (socket->ports (zmq-getsockopt/int s 'fd) "zmq")))
       ;; Create socket structure.
-      (let ((socket (new-socket s inch)))
+      (let ((socket (new-socket s inch ping)))
         ;; Set socket identity, if specified.
         (when identity
           (set-socket-identity! socket identity))
@@ -64,8 +67,8 @@
         ;; Pump channels from socket to the channel.
         (define pump
           (thread (thunk
-                    (for ((msg (in-producer drain #f s in)))
-                         (channel-put inch msg)))))
+                    (for ((msg (in-producer drain #f s (choice-evt in ping))))
+                      (channel-put inch msg)))))
 
         ;; Kill the pump once our socket gets forgotten.
         (register-finalizer socket
@@ -103,15 +106,24 @@
   (zmq-getsockopt/bstr (socket-sock socket) 'identity))
 
 
+(define/contract (string->bytes/safe str)
+                 (-> (or/c string? bytes?) bytes?)
+  (if (bytes? str) str (string->bytes/utf-8 str)))
+
+
 (define/contract (socket-send socket . parts)
                  (->* (socket?) () #:rest (listof (or/c bytes? string?)) void?)
-  (unless (null? parts)
-    (let ((value (if (string? (car parts))
-                   (string->bytes/utf-8 (car parts))
-                   (car parts))))
-      (zmq-send (socket-sock socket) value
-                (if (null? (cdr parts)) '() '(sndmore))))
-    (apply socket-send socket (cdr parts))))
+  (if (null? parts)
+    ;; All parts have been sent.  Ping receiver to catch up.
+    (async-channel-put (socket-ping socket) #t)
+
+    ;; Send one more part.
+    (let ((value (string->bytes/safe (car parts)))
+          (flags (if (null? (cdr parts)) '() '(sndmore))))
+      (zmq-send (socket-sock socket) value flags)
+
+      ;; Recurse and do the same with other parts.
+      (apply socket-send socket (cdr parts)))))
 
 
 (define/contract (socket-receive/list socket)
