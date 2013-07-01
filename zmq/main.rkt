@@ -78,17 +78,18 @@
 
 ;; Wait for and read a message from socket.
 (define (drain sock evt)
-  (let poll ()
+  (define (poll)
     (let ((flags (zmq-getsockopt/int sock 'events)))
       (unless (bitwise-bit-set? flags 0)
         (sync evt)
         (poll))))
 
   (let loop ()
-    (let ((msg (zmq-msg-recv sock '(dontwait))))
-      (if (zmq-msg-more? msg)
-        (cons (zmq-msg->bytes msg) (loop))
-        (list (zmq-msg->bytes msg))))))
+    (with-handlers ((exn:fail:zmq:again? (lambda (exn) (poll) (loop))))
+      (let ((msg (zmq-msg-recv sock '(dontwait))))
+        (if (zmq-msg-more? msg)
+          (cons (zmq-msg->bytes msg) (loop))
+          (list (zmq-msg->bytes msg)))))))
 
 
 (define/contract (set-socket-identity! socket name)
