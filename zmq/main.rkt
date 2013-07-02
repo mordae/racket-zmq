@@ -19,7 +19,8 @@
 
 
 (define-struct socket
-  (sock  ; The actual C object.
+  (type  ; Socket mode.
+   sock  ; The actual C object.
    inch  ; Channel for message receiving.
    ping) ; Channel to ping input pump.
   #:constructor-name new-socket)
@@ -47,7 +48,7 @@
     ;; Extract notification port.
     (let-values (((in out) (socket->ports (zmq-getsockopt/int s 'fd) "zmq")))
       ;; Create socket structure.
-      (let ((socket (new-socket s inch ping)))
+      (let ((socket (new-socket type s inch ping)))
         ;; Set socket identity, if specified.
         (when identity
           (set-socket-identity! socket identity))
@@ -65,10 +66,12 @@
           (socket-subscribe! socket prefix))
 
         ;; Pump channels from socket to the channel.
-        (define pump
-          (thread (thunk
-                    (for ((msg (in-producer drain #f s (choice-evt in ping))))
-                      (channel-put inch msg)))))
+        (unless (eq? type 'pub)
+          (define pump
+            (thread
+              (thunk
+                (for ((msg (in-producer drain #f s (choice-evt in ping))))
+                  (channel-put inch msg))))))
 
         ;; Kill the pump once our socket gets forgotten.
         (register-finalizer socket
@@ -114,8 +117,9 @@
 (define/contract (socket-send socket . parts)
                  (->* (socket?) () #:rest (listof (or/c bytes? string?)) void?)
   (if (null? parts)
-    ;; All parts have been sent.  Ping receiver to catch up.
-    (async-channel-put (socket-ping socket) #t)
+    (unless (eq? 'pub (socket-type socket))
+      ;; All parts have been sent.  Ping receiver to catch up.
+      (async-channel-put (socket-ping socket) #t))
 
     ;; Send one more part.
     (let ((value (string->bytes/safe (car parts)))
