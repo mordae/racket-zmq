@@ -71,12 +71,12 @@
             (thread
               (thunk
                 (for ((msg (in-producer drain #f s (choice-evt in ping))))
-                  (channel-put inch msg))))))
+                  (channel-put inch msg)))))
 
-        ;; Kill the pump once our socket gets forgotten.
-        (register-finalizer socket
-          (lambda (socket)
-            (thread-suspend pump)))
+          ;; Kill the pump once our socket gets forgotten.
+          (register-finalizer socket
+            (lambda (socket)
+              (thread-suspend pump))))
 
         ;; Return the new socket.
         socket))))
