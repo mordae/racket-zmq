@@ -5,7 +5,6 @@
 
 (require racket/contract
          racket/function
-         racket/async-channel
          (only-in ffi/unsafe register-finalizer))
 
 (require "private/ffi.rkt")
@@ -22,7 +21,7 @@
   (type  ; Socket mode.
    sock  ; The actual C object.
    inch  ; Channel for message receiving.
-   ping) ; Channel to ping input pump.
+   ping) ; Semaphore to ping input pump.
   #:constructor-name new-socket)
 
 
@@ -44,7 +43,7 @@
   ;; Create the underlying C object.
   (let ((s    (zmq-socket zmq-context type))
         (inch (make-channel))
-        (ping (make-async-channel)))
+        (ping (make-semaphore)))
     ;; Extract notification port.
     (let-values (((in out) (socket->ports (zmq-getsockopt/int s 'fd) "zmq")))
       ;; Create socket structure.
@@ -119,7 +118,7 @@
   (if (null? parts)
     (unless (eq? 'pub (socket-type socket))
       ;; All parts have been sent.  Ping receiver to catch up.
-      (async-channel-put (socket-ping socket) #t))
+      (semaphore-post (socket-ping socket)))
 
     ;; Send one more part.
     (let ((value (string->bytes/safe (car parts)))
