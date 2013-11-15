@@ -7,7 +7,8 @@
          (for-syntax racket/base)
          (for-syntax racket/syntax)
          racket/contract
-         racket/provide)
+         racket/provide
+         throw)
 
 (require "common.rkt")
 
@@ -49,12 +50,10 @@
             (not result))
     (cond
       ((= (saved-errno) 11)
-       (raise (exn:fail:zmq:again (zmq-strerror (saved-errno))
-                                  (current-continuation-marks))))
+       (throw exn:fail:zmq:again 'zmq (zmq-strerror (saved-errno))))
 
       (else
-       (raise (exn:fail:zmq (zmq-strerror (saved-errno))
-                            (current-continuation-marks))))))
+       (throw exn:fail:zmq 'zmq (zmq-strerror (saved-errno))))))
   result)
 
 
