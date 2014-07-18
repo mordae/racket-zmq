@@ -3,13 +3,11 @@
 ; ZeroMQ FFI Bindings
 ;
 
-(require racket/contract
-         ffi/unsafe/define
+(require ffi/unsafe/define
          ffi/unsafe/alloc
          racket/list)
 
-(require misc1/syntax
-         misc1/throw)
+(require misc1/throw)
 
 (require
   (rename-in ffi/unsafe (-> -->)))
