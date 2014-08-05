@@ -22,8 +22,8 @@
 
 
 ;; Symbol importer.
-(define-ffi-definer define-zmq
-                    (ffi-lib "libzmq" '("3" "")))
+(define-ffi-definer define-scheme #f)
+(define-ffi-definer define-zmq (ffi-lib "libzmq" '("3" "")))
 
 
 ;; Utility that makes sure parent argument is only collected after the
@@ -60,18 +60,18 @@
 
 
 ;; Convert unix file descriptor to Racket ports.
-(define socket->ports
-  (get-ffi-obj 'scheme_socket_to_ports #f
+(define-scheme socket->ports
                (_fun _long
                      _string/utf-8
                      (_int = 0)
-                     (inp : (_ptr o _scheme))
-                     (outp : (_ptr o _scheme))
+                     (in : (_ptr o _scheme))
+                     (out : (_ptr o _scheme))
                      --> _void
                      --> (begin
-                           (register-finalizer inp close-input-port)
-                           (register-finalizer outp close-output-port)
-                           (values inp outp)))))
+                           (register-finalizer in close-input-port)
+                           (register-finalizer out close-output-port)
+                           (values in out)))
+               #:c-id scheme_socket_to_ports)
 
 
 (define-cpointer-type _zmq-ctx-pointer)
