@@ -5,8 +5,9 @@
 
 (require racket/contract
          racket/function
-         racket/undefined
-         (only-in ffi/unsafe register-finalizer))
+         racket/undefined)
+
+(require misc1/async)
 
 (require "private/ffi.rkt")
 
@@ -55,8 +56,8 @@
 ;; Structure representing a socket, using a background racket thread
 ;; with a channel to receive messages.
 (struct socket
-  (type sock inch ping)
-  #:property prop:evt (struct-field-index inch))
+  (type sock recv-evt ping)
+  #:property prop:evt (struct-field-index recv-evt))
 
 
 (define (socket-type? v)
@@ -69,43 +70,31 @@
                           #:bind (bind null)
                           #:connect (connect null))
   ;; Create the underlying C object.
-  (let ((s (zmq-socket zmq-context type))
-        (inch (make-channel))
-        (ping (make-semaphore)))
-    ;; Extract notification port.
-    (let-values (((in out) (socket->ports (zmq-getsockopt/int s 'fd) "zmq")))
-      ;; Create socket structure.
-      (let ((socket (socket type s inch ping)))
-        ;; Set socket identity, if specified.
-        (when identity
-          (socket-identity socket identity))
+  (let*-values (((s) (zmq-socket zmq-context type))
+                ((in out) (socket->ports (zmq-getsockopt/int s 'fd) "zmq"))
+                ((ping) (make-semaphore))
+                ((recv-evt) (async/loop
+                              (drain s (choice-evt in ping)))))
+    ;; Create socket structure.
+    (let ((socket (socket type s recv-evt ping)))
+      ;; Set socket identity, if specified.
+      (when identity
+        (socket-identity socket identity))
 
-        ;; Bind to given endpoints.
-        (for ((endpoint (in-list bind)))
-          (socket-bind socket endpoint))
+      ;; Bind to given endpoints.
+      (for ((endpoint (in-list bind)))
+        (socket-bind socket endpoint))
 
-        ;; Connect to given endpoints.
-        (for ((endpoint (in-list connect)))
-          (socket-connect socket endpoint))
+      ;; Connect to given endpoints.
+      (for ((endpoint (in-list connect)))
+        (socket-connect socket endpoint))
 
-        ;; Subscribe to given prefixes.
-        (for ((prefix (in-list subscribe)))
-          (socket-subscribe socket prefix))
+      ;; Subscribe to given prefixes.
+      (for ((prefix (in-list subscribe)))
+        (socket-subscribe socket prefix))
 
-        ;; Pump channels from socket to the channel.
-        (unless (eq? type 'pub)
-          (define pump
-            (thread
-              (thunk
-                (for ((msg (in-producer drain #f s (choice-evt in ping))))
-                  (channel-put inch msg)))))
-
-          ;; Kill the pump once our socket gets forgotten.
-          (register-finalizer socket (λ (socket)
-                                       (thread-suspend pump))))
-
-        ;; Return the new socket.
-        socket))))
+      ;; Return the new socket.
+      socket)))
 
 
 ;; Wait for and read a message from socket.
@@ -154,7 +143,7 @@
 
 
 (define (socket-receive/list socket)
-  (channel-get (socket-inch socket)))
+  (sync socket))
 
 
 (define (socket-receive socket)
