@@ -95,7 +95,9 @@
   (_enum '(fd = 14
            events = 15
            type = 16
-           linger = 17)))
+           linger = 17
+           sndhwm = 23
+           rcvhwm = 24)))
 
 
 (define _zmq-socket-type

@@ -21,7 +21,9 @@
                  (#:identity (or/c #f string? bytes?)
                   #:subscribe (listof (or/c string? bytes?))
                   #:bind (listof string?)
-                  #:connect (listof string?))
+                  #:connect (listof string?)
+                  #:send-queue (or/c #f exact-positive-integer?)
+                  #:receive-queue (or/c #f exact-positive-integer?))
                  socket?))
 
     (socket-identity
@@ -68,7 +70,9 @@
 (define (make-socket type #:identity (identity #f)
                           #:subscribe (subscribe null)
                           #:bind (bind null)
-                          #:connect (connect null))
+                          #:connect (connect null)
+                          #:send-queue (send-queue #f)
+                          #:receive-queue (receive-queue #f))
   ;; Create the underlying C object.
   (let*-values (((s) (zmq-socket zmq-context type))
                 ((in out) (socket->ports (zmq-getsockopt/int s 'fd) "zmq"))
@@ -80,6 +84,14 @@
       ;; Set socket identity, if specified.
       (when identity
         (socket-identity socket identity))
+
+      ;; Send outgoing queue maximum length.
+      (when send-queue
+        (zmq-setsockopt/int s 'sndhwm send-queue))
+
+      ;; Send incoming queue maximum length.
+      (when receive-queue
+        (zmq-setsockopt/int s 'rcvhwm receive-queue))
 
       ;; Bind to given endpoints.
       (for ((endpoint (in-list bind)))
