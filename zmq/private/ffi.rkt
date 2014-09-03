@@ -59,19 +59,14 @@
       (values result))))
 
 
-;; Convert unix file descriptor to Racket ports.
-(define-scheme socket->ports
-               (_fun _long
-                     _string/utf-8
-                     (_int = 0)
-                     (in : (_ptr o _scheme))
-                     (out : (_ptr o _scheme))
-                     --> _void
-                     --> (begin
-                           (register-finalizer in close-input-port)
-                           (register-finalizer out close-output-port)
-                           (values in out)))
-               #:c-id scheme_socket_to_ports)
+;; Convert unix file descriptor to Racket input port.
+(define-scheme socket->read-port
+               (_fun (fd : _int)
+                     (name : _racket)
+                     (regular? : _bool = #f)
+                     (textmode? : _bool = #f)
+                     --> (in : _racket))
+               #:c-id scheme_make_fd_input_port)
 
 
 (define-cpointer-type _zmq-ctx-pointer)
