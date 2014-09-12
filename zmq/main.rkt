@@ -27,7 +27,8 @@
                  socket?))
 
     (socket-identity
-      (->* (socket?) ((or/c string? bytes?)) (or/c void? bytes?)))
+      (case-> (-> socket? bytes?)
+              (-> socket? (or/c string? bytes?) void?)))
 
     (socket-send
       (->* (socket?) () #:rest (listof (or/c bytes? string?)) void?))
