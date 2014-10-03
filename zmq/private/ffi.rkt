@@ -20,6 +20,8 @@
 (struct exn:fail:zmq exn:fail ())
 (struct exn:fail:zmq:again exn:fail:zmq ())
 
+;; Find correct errno for the current platform.
+(define EAGAIN (lookup-errno 'EAGAIN))
 
 ;; Symbol importer.
 (define-ffi-definer define-scheme #f)
@@ -45,7 +47,7 @@
   (when (or (and (integer? result)
                  (< result 0))
             (not result))
-    (if (= (saved-errno) 11)
+    (if (= (saved-errno) EAGAIN)
         (throw exn:fail:zmq:again 'zmq (zmq-strerror (saved-errno)))
         (throw exn:fail:zmq       'zmq (zmq-strerror (saved-errno))))))
 
