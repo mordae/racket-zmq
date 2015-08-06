@@ -1,87 +1,112 @@
-#lang racket/base
+#lang typed/racket/base
 ;
 ; ZeroMQ Bindings
 ;
 
-(require racket/contract
-         racket/function
-         racket/undefined)
+(require racket/function)
 
-(require misc1/async)
+(require mordae/async)
 
-(require "private/ffi.rkt")
+(require/typed zmq/private/ffi
+  (#:opaque Context-Pointer zmq-ctx-pointer?)
+  (#:opaque Socket-Pointer zmq-socket-pointer?)
+  (#:opaque Message zmq-msg?)
+
+  (socket->read-port
+    (-> Integer String Input-Port))
+
+  (zmq-ctx-new
+    (-> Context-Pointer))
+  (zmq-socket
+    (-> Context-Pointer Socket-Kind Socket-Pointer))
+  (zmq-getsockopt/int
+    (-> Socket-Pointer Symbol Integer))
+  (zmq-setsockopt/int
+    (-> Socket-Pointer Symbol Integer Integer))
+  (zmq-getsockopt/bstr
+    (-> Socket-Pointer Symbol Bytes))
+  (zmq-setsockopt/bstr
+    (-> Socket-Pointer Symbol Bytes Integer))
+  (zmq-msg-recv
+    (-> Socket-Pointer (Listof (U 'dontwait)) Message))
+  (zmq-msg-more?
+    (-> Message Boolean))
+  (zmq-msg->bytes
+    (-> Message Bytes))
+  (zmq-send
+    (-> Socket-Pointer Bytes (Listof (U 'dontwait 'sndmore)) Integer))
+  (zmq-bind
+    (-> Socket-Pointer String Integer))
+  (zmq-connect
+    (-> Socket-Pointer String Integer))
+
+  (#:struct (exn:fail:zmq exn:fail) ())
+  (#:struct (exn:fail:zmq:again exn:fail:zmq) ()))
+
+(provide socket?
+         socket-kind?
+         socket-identity
+         socket-send
+         socket-receive/list
+         socket-receive
+         socket-bind
+         socket-connect
+         socket-subscribe
+         socket-unsubscribe)
 
 (provide
-  (contract-out
-    (socket? predicate/c)
-    (socket-type? predicate/c)
+  (rename-out (new-socket socket)))
 
-    (rename make-socket socket
-            (->* (socket-type?)
-                 (#:identity (or/c #f string? bytes?)
-                  #:subscribe (listof (or/c string? bytes?))
-                  #:bind (listof string?)
-                  #:connect (listof string?)
-                  #:send-queue (or/c #f exact-positive-integer?)
-                  #:receive-queue (or/c #f exact-positive-integer?))
-                 socket?))
-
-    (socket-identity
-      (case-> (-> socket? bytes?)
-              (-> socket? (or/c string? bytes?) void?)))
-
-    (socket-send
-      (->* (socket?) () #:rest (listof (or/c bytes? string?)) void?))
-
-    (socket-receive/list
-      (-> socket? (listof bytes?)))
-
-    (socket-receive
-      (-> socket? any))
-
-    (socket-bind
-      (-> socket? string? void?))
-
-    (socket-connect
-      (-> socket? string? void?))
-
-    (socket-subscribe
-      (-> socket? (or/c bytes? string?) void?))
-
-    (socket-unsubscribe
-      (-> socket? (or/c bytes? string?) void?))))
+(provide Socket
+         Socket-Kind)
 
 
 ;; Single context with only one I/O thread.
 (define zmq-context (zmq-ctx-new))
 
 
+;; Special type for socket variants.
+(define-type Socket-Kind (U 'pub 'sub 'router))
+(define-predicate socket-kind? Socket-Kind)
+
+;; Alias for our primary structure as `socket` itself is already
+;; occupied by the constructor name in our provides.
+(define-type Socket socket)
+
+
 ;; Structure representing a socket, using a background racket thread
 ;; with a channel to receive messages.
 (struct socket
-  (type sock recv-evt ping)
+  ((kind : Socket-Kind)
+   (sock : Socket-Pointer)
+   (recv-evt : (Evtof (Listof Bytes)))
+   (ping : Semaphore))
   #:property prop:evt (struct-field-index recv-evt))
 
 
-(define (socket-type? v)
-  ;; We only support non-blocking socket types.
-  (list? (member v '(pub sub router))))
-
-
-(define (make-socket type #:identity (identity #f)
-                          #:subscribe (subscribe null)
-                          #:bind (bind null)
-                          #:connect (connect null)
-                          #:send-queue (send-queue #f)
-                          #:receive-queue (receive-queue #f))
+(: new-socket (->* (Socket-Kind)
+                   (#:identity (U String Bytes)
+                    #:subscribe (Listof (U String Bytes))
+                    #:bind (Listof String)
+                    #:connect (Listof String)
+                    #:send-queue Natural
+                    #:receive-queue Natural)
+                   Socket))
+(define (new-socket kind #:identity (identity #f)
+                    #:subscribe (subscribe null)
+                    #:bind (bind null)
+                    #:connect (connect null)
+                    #:send-queue (send-queue #f)
+                    #:receive-queue (receive-queue #f))
   ;; Create the underlying C object.
-  (let* ((s (zmq-socket zmq-context type))
+  (let* ((s (zmq-socket zmq-context kind))
          (in (socket->read-port (zmq-getsockopt/int s 'fd) "zmq"))
          (ping (make-semaphore))
-         (recv-evt (async/loop
-                     (drain s (choice-evt in ping)))))
+         (recv-evt (async-task-evt
+                     (async/loop
+                       (drain s (choice-evt in ping))))))
     ;; Create socket structure.
-    (let ((socket (socket type s recv-evt ping)))
+    (let ((socket (socket kind s recv-evt ping)))
       ;; Set socket identity, if specified.
       (when identity
         (socket-identity socket identity))
@@ -95,15 +120,15 @@
         (zmq-setsockopt/int s 'rcvhwm receive-queue))
 
       ;; Bind to given endpoints.
-      (for ((endpoint (in-list bind)))
+      (for ((endpoint : String bind))
         (socket-bind socket endpoint))
 
       ;; Connect to given endpoints.
-      (for ((endpoint (in-list connect)))
+      (for ((endpoint : String connect))
         (socket-connect socket endpoint))
 
       ;; Subscribe to given prefixes.
-      (for ((prefix (in-list subscribe)))
+      (for ((prefix : (U String Bytes) subscribe))
         (socket-subscribe socket prefix))
 
       ;; Return the new socket.
@@ -111,14 +136,15 @@
 
 
 ;; Wait for and read a message from socket.
+(: drain (-> Socket-Pointer (Evtof Any) (Listof Bytes)))
 (define (drain sock evt)
-  (define (poll)
+  (define (poll) : Void
     (let ((flags (zmq-getsockopt/int sock 'events)))
       (unless (bitwise-bit-set? flags 0)
         (sync evt)
         (poll))))
 
-  (let loop ()
+  (let loop : (Listof Bytes) ()
     (with-handlers ((exn:fail:zmq:again? (lambda (exn) (poll) (loop))))
       (let ((msg (zmq-msg-recv sock '(dontwait))))
         (if (zmq-msg-more? msg)
@@ -126,23 +152,25 @@
           (list (zmq-msg->bytes msg)))))))
 
 
-(define (socket-identity socket (name undefined))
-  (cond
-    ((eq? name undefined)
-     (zmq-getsockopt/bstr (socket-sock socket) 'identity))
+(define socket-identity
+  (case-lambda
+    (((s : Socket))
+     (zmq-getsockopt/bstr (socket-sock s) 'identity))
 
-    (else
+    (((s : Socket) (name : (U String Bytes)))
      (let ((name (string->bytes/safe name)))
-       (void (zmq-setsockopt/bstr (socket-sock socket) 'identity name))))))
+       (void (zmq-setsockopt/bstr (socket-sock s) 'identity name))))))
 
 
+(: string->bytes/safe (-> (U String Bytes) Bytes))
 (define (string->bytes/safe str)
   (if (bytes? str) str (string->bytes/utf-8 str)))
 
 
+(: socket-send (-> Socket (U String Bytes) * Void))
 (define (socket-send socket . parts)
   (if (null? parts)
-    (unless (eq? 'pub (socket-type socket))
+    (unless (eq? 'pub (socket-kind socket))
       ;; All parts have been sent.  Ping receiver to catch up.
       (semaphore-post (socket-ping socket)))
 
@@ -155,30 +183,38 @@
       (apply socket-send socket (cdr parts)))))
 
 
+(: socket-receive/list (-> Socket (Listof Bytes)))
 (define (socket-receive/list socket)
-  (sync socket))
+  (sync (socket-recv-evt socket)))
 
 
+(: socket-receive (-> Socket Bytes))
 (define (socket-receive socket)
-  (apply values (socket-receive/list socket)))
+  (apply bytes-append (socket-receive/list socket)))
 
 
+(: socket-bind (-> Socket String Void))
 (define (socket-bind socket endpoint)
-  (zmq-bind (socket-sock socket) endpoint))
+  (void (zmq-bind (socket-sock socket) endpoint)))
 
 
+(: socket-connect (-> Socket String Void))
 (define (socket-connect socket endpoint)
-  (zmq-connect (socket-sock socket) endpoint))
+  (void (zmq-connect (socket-sock socket) endpoint)))
 
 
+(: socket-subscribe (-> Socket (U String Bytes) Void))
 (define (socket-subscribe socket prefix)
-  (let ((prefix (if (string? prefix) (string->bytes/utf-8 prefix) prefix)))
-    (zmq-setsockopt/bstr (socket-sock socket) 'subscribe prefix)))
+  (let ((prefix (string->bytes/safe prefix)))
+    (void
+      (zmq-setsockopt/bstr (socket-sock socket) 'subscribe prefix))))
 
 
+(: socket-unsubscribe (-> Socket (U String Bytes) Void))
 (define (socket-unsubscribe socket prefix)
-  (let ((prefix (if (string? prefix) (string->bytes/utf-8 prefix) prefix)))
-    (zmq-setsockopt/bstr (socket-sock socket) 'unsubscribe prefix)))
+  (let ((prefix (string->bytes/safe prefix)))
+    (void
+      (zmq-setsockopt/bstr (socket-sock socket) 'unsubscribe prefix))))
 
 
 ; vim:set ts=2 sw=2 et:
