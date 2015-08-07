@@ -102,9 +102,11 @@
   (let* ((s (zmq-socket zmq-context kind))
          (in (socket->read-port (zmq-getsockopt/int s 'fd) "zmq"))
          (ping (make-semaphore))
-         (recv-evt (async-task-evt
-                     (async/loop
-                       (drain s (choice-evt in ping))))))
+         (recv-evt (if (eq? 'pub kind)
+                       never-evt
+                       (async-task-evt
+                         (async/loop
+                           (drain s (choice-evt in ping)))))))
     ;; Create socket structure.
     (let ((socket (socket kind s recv-evt ping)))
       ;; Set socket identity, if specified.
