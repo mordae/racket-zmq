@@ -72,6 +72,11 @@ This module is typed and can be used from both normal and typed code.
   target peer's identity.
 }
 
+@defproc[(socket-receive-evt (s Socket)) (Evtof (Listof Bytes))]{
+  Returns an asynchronous event that produces received lists.
+  Results are identical to return values of @racket[socket-receive].
+}
+
 @defproc[(socket-bind (s Socket) (addr String)) Void]{
   Bind to specified ZeroMQ endpoint address such as
   @racket["tcp://127.0.0.1:1234"].

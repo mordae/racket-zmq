@@ -47,6 +47,7 @@
          socket-kind?
          socket-identity
          socket-send
+         socket-receive-evt
          socket-receive
          socket-bind
          socket-connect
@@ -185,6 +186,11 @@
 (: socket-receive (-> Socket (Listof Bytes)))
 (define (socket-receive socket)
   (sync (socket-recv-evt socket)))
+
+
+(: socket-receive-evt (-> Socket (Evtof (Listof Bytes))))
+(define (socket-receive-evt socket)
+  (cast socket (Evtof (Listof Bytes))))
 
 
 (: socket-bind (-> Socket String Void))
