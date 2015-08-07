@@ -65,17 +65,11 @@ This module is typed and can be used from both normal and typed code.
   target peer's identity.
 }
 
-@defproc[(socket-receive/list (s Socket)) (Listof Bytes)]{
+@defproc[(socket-receive (s Socket)) (Listof Bytes)]{
   Receive a multi-part message as a list of it's parts.
 
   When operating in the @racket['router] mode, first part is reserved for
   target peer's identity.
-}
-
-@defproc[(socket-receive (s Socket)) Any]{
-  Same as @racket[socket-receive/list], but concatenates all parts together
-  and returns them as a single byte string. You probably do not want to use
-  this, unless you really expect single part messages only.
 }
 
 @defproc[(socket-bind (s Socket) (addr String)) Void]{

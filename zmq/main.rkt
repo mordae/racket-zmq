@@ -47,7 +47,6 @@
          socket-kind?
          socket-identity
          socket-send
-         socket-receive/list
          socket-receive
          socket-bind
          socket-connect
@@ -183,14 +182,9 @@
       (apply socket-send socket (cdr parts)))))
 
 
-(: socket-receive/list (-> Socket (Listof Bytes)))
-(define (socket-receive/list socket)
-  (sync (socket-recv-evt socket)))
-
-
-(: socket-receive (-> Socket Bytes))
+(: socket-receive (-> Socket (Listof Bytes)))
 (define (socket-receive socket)
-  (apply bytes-append (socket-receive/list socket)))
+  (sync (socket-recv-evt socket)))
 
 
 (: socket-bind (-> Socket String Void))
